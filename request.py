@@ -10,8 +10,8 @@ from http.cookies import SimpleCookie
 from io import BytesIO
 from tempfile import TemporaryFile
 
-from .others import CachedObjAttr, MultiDict
 from .response import HTTPError
+from .utils import cached_property, MultiDict
 
 class CachedToEnviron:
     def __init__(self, fget):
@@ -53,7 +53,7 @@ class FileUpload:
             fp.write(buffer)
         self.file.seek(offset)
 
-    @CachedObjAttr
+    @cached_property
     def filename(self):
         ''' Name of the file on the client file system, but normalized to
         ensure file system compatibility (lowercase, no whitespace, no path
@@ -74,10 +74,10 @@ class FileUpload:
     def save(self, filepath, overwrite=False, chunk_len=2**16):
         ''' Save file to a disk or copy its content to an open file(-like)
         object. Existing files are not overwritten by default (IOError).
-            `filepath`: File path or file(-like) object. If the directory
+            "filepath": File path or file(-like) object. If the directory
                         doesn`t exist, it will be created recursively.
-            `overwrite`: If True, replace existing files. (default: False)
-            `chunk_len`: Bytes to read at a time. (default: 64kb)
+            "overwrite": If True, replace existing files. (default: False)
+            "chunk_len": Bytes to read at a time. (default: 64kb)
         '''
         if isinstance(filepath, str): # Except file-likes here
             dirname = os.path.dirname(filepath)
@@ -90,7 +90,7 @@ class FileUpload:
         else:
             self._copy_file(filepath, chunk_len)
 
-    @CachedObjAttr
+    @cached_property
     def size(self):
         self.file.seek(0, 2)
         size = self.file.tell()
@@ -168,7 +168,7 @@ class HTTPRequest:
             conlen -= len(part)
 
     def _iter_chunked(self, read, bufsize):
-        err = HTTPError(400, 'Error while parsing chunked body.')
+        err = HTTPError('Error while parsing chunked body.', 400)
         rn, sem = '\r\n'.encode(), ';'.encode()
         while True:
             header = read(2)
@@ -222,10 +222,10 @@ class HTTPRequest:
                         post[item.name] = [item.value]
             return post
         else:
-            # If not `multipart` we default to `application/x-www-form-urlencoded`
+            # If not "multipart" we default to "application/x-www-form-urlencoded"
             conlen = self.content_length
             if conlen > self.MEMFILE_MAX:
-                raise HTTPError(413, 'Request too large')
+                raise HTTPError('Request too large', 413)
             body = self._body.read(conlen).decode()
             return urllib.parse.parse_qs(body, keep_blank_values=True)
 
@@ -280,14 +280,14 @@ class HTTPRequest:
     @CachedToEnviron
     def is_ajax(self):
         ''' True if the request was triggered by a XMLHTTPRequest. This only
-        works with JavaScript libraries that support the `X-Requested-With`
+        works with JavaScript libraries that support the "X-Requested-With"
         header (most of the popular libraries do). '''
         requested_with = self.environ.get('HTTP_X_REQUESTED_WITH', '')
         return requested_with.lower() == 'xmlhttprequest'
 
     @CachedToEnviron
     def is_chunked(self):
-        ''' True if HTTP header contains `Transfer-Encoding: chunked` '''
+        ''' True if HTTP header contains "Transfer-Encoding: chunked" '''
         return 'chunked' in self.environ.get('HTTP_TRANSFER_ENCODING', '').lower()
 
     def keys(self):
@@ -295,7 +295,7 @@ class HTTPRequest:
 
     @CachedToEnviron
     def method(self):
-        ''' `REQUEST_METHOD` as an uppercase string. '''
+        ''' "REQUEST_METHOD" as an uppercase string. '''
         return self.environ.get('REQUEST_METHOD', 'GET').upper()
 
     @CachedToEnviron
@@ -304,7 +304,7 @@ class HTTPRequest:
     
     @CachedToEnviron
     def path(self):
-        ''' `PATH_INFO` lowercased with exactly one prefixed slash (to fix broken clients). '''
+        ''' "PATH_INFO" lowercased with exactly one prefixed slash (to fix broken clients). '''
         return '/' + self.environ.get('PATH_INFO', '').lstrip('/').lower()
 
     @CachedToEnviron
@@ -317,7 +317,7 @@ class HTTPRequest:
     def remote_route(self):
         ''' A list of all IPs that were involved in this request, starting with
         the client IP and followed by zero or more proxies. This does only work
-        if all proxies support the `X-Forwarded-For` header. This information
+        if all proxies support the "X-Forwarded-For" header. This information
         can be forged by malicious clients. '''
         proxy = self.environ.get('HTTP_X_FORWARDED_FOR')
         if proxy:
@@ -326,18 +326,18 @@ class HTTPRequest:
         return [remote] if remote else []
 
     @CachedToEnviron
-    def rurl(self):
+    def url(self):
         ''' The relative URL. '''
-        rurl = self.path
+        url = self.path
         if self.query:
-            rurl += '?' + self.query
-        return rurl
+            url += '?' + self.query
+        return url
 
     @CachedToEnviron
-    def url(self):
+    def urlfull(self):
         ''' The full request URL including hostname and scheme. If your app
         lives behind a reverse proxy or load balancer and you get confusing
-        results, make sure that the `X-Forwarded-Host` header is set
+        results, make sure that the "X-Forwarded-Host" header is set
         correctly. '''
         return self.urlparts.geturl()
 
@@ -351,7 +351,6 @@ class HTTPRequest:
         http = env.get('HTTP_X_FORWARDED_PROTO') or env.get('wsgi.url_scheme', 'http')
         host = env.get('HTTP_X_FORWARDED_HOST') or env.get('HTTP_HOST')
         if not host:
-            # HTTP 1.1 requires a Host-header. This is for HTTP/1.0 clients.
             host = env.get('SERVER_NAME', '127.0.0.1')
             port = env.get('SERVER_PORT')
             if port and port != ('80' if http=='http' else '443'):

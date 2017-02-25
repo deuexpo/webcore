@@ -1,45 +1,30 @@
 __version__ = '0.1'
 
+import functools
 import http.cookies
 import traceback
 
-from .others import MultiDict
 from .request import HTTPRequest
 from .response import HTTPError, HTTPResponse
 from .route import Route
-
-class Plugins:
-    def __init__(self):
-        super().__setattr__('plugins', [])
-
-    def __delattr__(self, key):
-        raise AttributeError('Read-only attribute')
-
-    def __setattr__(self, key, val):
-        if hasattr(self, key):
-            raise AttributeError('Read-only attribute')
-        self.plugins.insert(0, val)
-        super().__setattr__(key, val)
-
-    def __iter__(self):
-        return iter(self.plugins)
+from .utils import MultiDict
 
 class App:
     def __init__(self):
-        self.COOKIES = {}
         self.GET = MultiDict()
         self.POST = MultiDict()
         self.FILES = {}
+        self.COOKIES = {}
         self.cookies = http.cookies.SimpleCookie()
         self.plugins = Plugins()
         self.request = HTTPRequest()
         self.routes = []
 
     def __call__(self, environ, start_response):
-        self.COOKIES.clear()
         self.GET.clear()
         self.POST.clear()
         self.FILES.clear()
+        self.COOKIES.clear()
         self.cookies.clear()
         self.request.bind(environ)
         self.COOKIES.update(self.request.COOKIES)
@@ -50,14 +35,17 @@ class App:
             try:
                 for route in self.routes:
                     if route.match(self.request.path):
-                        raise HTTPResponse(200, None, route())
+                        output = route()
+                        if isinstance(output, HTTPResponse):
+                            raise output
+                        else:
+                            raise HTTPResponse(output)
                 self.notfound()
             except (HTTPResponse, KeyboardInterrupt, MemoryError, SystemExit):
                 raise
-            except Exception:
-                stacktrace = traceback.format_exc()
-                environ['wsgi.errors'].write(stacktrace)
-                raise HTTPError(500, 'Internal Server Error.')
+            except:
+                environ['wsgi.errors'].write(traceback.format_exc())
+                raise HTTPError()
         except HTTPResponse as r:
             headers = []
             for k, v in r.headers.items():
@@ -74,22 +62,22 @@ class App:
 
     def error(self, text):
         self.cookies.clear()
-        raise HTTPError(500, text)
+        raise HTTPError(text)
 
     def install(self, name, plugin):
         assert not hasattr(self.plugins, name), 'Plugin "{0}" is already installed'.format(name)
         setattr(self.plugins, name, plugin)
 
-    def notfound(self, text='Page is not found!'):
+    def notfound(self, text='Not Found'):
         self.cookies.clear()
-        raise HTTPResponse(404, None, text)
+        raise HTTPResponse(text, 404)
 
     def redirect(self, url, code=302):
         ''' Redirect with one of the following codes:
             301 Moved Permamnetly
             302 Moved Temporaly '''
         code = 301 if int(code)==301 else 302
-        raise HTTPResponse(code, {'Location': str(url)})
+        raise HTTPResponse(None, code, {'Location': str(url)})
 
     '''
         def redirect(self, url, code=302):
@@ -104,10 +92,13 @@ class App:
                 body = ''
                 code = 301 if int(code)==301 else 302
                 headers = {'Location': url}
-            raise HTTPResponse(code, headers, body)
+            raise HTTPResponse(body, code, headers)
     '''
 
     def route(self, path, callback=None):
+        for route in self.routes:
+            if route.pattern == path:
+                raise ValueError('Duplicate route("{}", {})'.format(path, route.callback.__module__))
         def decorator(callback):
             original = callback
             for plugin in self.plugins:
@@ -146,3 +137,19 @@ class App:
             self.cookies[key]['secure'] = True
         if httponly:
             self.cookies[key]['httponly'] = True
+
+class Plugins:
+    def __init__(self):
+        super().__setattr__('plugins', [])
+
+    def __delattr__(self, key):
+        raise AttributeError('Read-only attribute')
+
+    def __setattr__(self, key, val):
+        if hasattr(self, key):
+            raise AttributeError('Read-only attribute')
+        self.plugins.insert(0, val)
+        super().__setattr__(key, val)
+
+    def __iter__(self):
+        return iter(self.plugins)
